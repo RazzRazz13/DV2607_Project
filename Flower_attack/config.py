@@ -9,7 +9,7 @@ DEVICE = torch.device("cpu")
 # Federated Learning
 # -------------------------
 NUM_ROUNDS = 5
-NUM_CLIENTS = 1
+NUM_CLIENTS = 2
 
 # -------------------------
 # Data / Model Interface
