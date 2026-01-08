@@ -1,5 +1,5 @@
 import flwr as fl
-from client import HonestClient, NoisyClient, DetectingClient
+from client import *
 from server import MaliciousFedAvg
 from data import prepare_dataloader
 from config import NUM_ROUNDS, NUM_CLIENTS
@@ -12,9 +12,7 @@ assert x.shape[0] == 1, "Gradient inversion requires batch_size=1"
 
 def client_fn(_):
     # Clone to avoid autograd / state leakage across rounds
-    # return HonestClient(x.clone(), y.clone()).to_client()
-    # return NoisyClient(x.clone(), y.clone()).to_client()
-    return DetectingClient(x.clone(), y.clone()).to_client()
+    return ProjectedClient(x.clone(), y.clone()).to_client()
 
 strategy = MaliciousFedAvg(
     fraction_fit=1.0,

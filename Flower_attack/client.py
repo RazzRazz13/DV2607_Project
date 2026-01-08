@@ -110,11 +110,8 @@ class DetectingClient(fl.client.NumPyClient):
         self.x = x.to(DEVICE)
         self.y = y.to(DEVICE)
 
-        # persistent across rounds
-        self.baseline_stats = None
-
     # --------------------------------------------------
-    # Flower required
+    # Flower required methods
     # --------------------------------------------------
     def get_parameters(self, config):
         return [p.detach().cpu().numpy() for p in self.model.state_dict().values()]
@@ -125,10 +122,10 @@ class DetectingClient(fl.client.NumPyClient):
     # --------------------------------------------------
     # Detection utilities
     # --------------------------------------------------
-    def _layer_stats(self):
+    def _collect_layer_stats(self):
         """
         Collect statistics from attack-relevant layers.
-        Returns dict: name -> (mean, std, max)
+        Returns dict: layer_name -> (mean, std, max_abs)
         """
         stats = {}
 
@@ -147,38 +144,36 @@ class DetectingClient(fl.client.NumPyClient):
 
         return stats
 
-    def _z_score(self, current, history, eps=1e-8):
+    def _z_score_between(self, early, late, eps=1e-8):
         """
-        Compute max Z-score across tracked layers.
+        Compute max Z-score between two statistic snapshots.
         """
         z_max = 0.0
 
-        for name in current:
-            if name not in history:
+        for name in early:
+            if name not in late:
                 continue
 
-            cur_mean, cur_std, cur_max = current[name]
-            hist_means = torch.tensor([h[name][0] for h in history])
-            hist_stds  = torch.tensor([h[name][1] for h in history])
-            hist_maxs  = torch.tensor([h[name][2] for h in history])
+            e_mean, e_std, e_max = early[name]
+            l_mean, l_std, l_max = late[name]
 
-            z_mean = abs(cur_mean - hist_means.mean().item()) / (hist_means.std().item() + eps)
-            z_std  = abs(cur_std  - hist_stds.mean().item())  / (hist_stds.std().item()  + eps)
-            z_maxv = abs(cur_max  - hist_maxs.mean().item())  / (hist_maxs.std().item()  + eps)
+            z_mean = abs(l_mean - e_mean) / (abs(e_mean) + eps)
+            z_std  = abs(l_std  - e_std)  / (abs(e_std)  + eps)
+            z_maxv = abs(l_max  - e_max)  / (abs(e_max)  + eps)
 
             z_max = max(z_max, z_mean, z_std, z_maxv)
 
         return z_max
 
     # --------------------------------------------------
-    # Warm-up detection
+    # Stateless warm-up detection
     # --------------------------------------------------
     def warmup_detect(self, steps=5, lr=1e-3, z_thresh=10.0):
         """
         Returns True if model appears malicious.
         """
         optimizer = torch.optim.SGD(self.model.parameters(), lr=lr)
-        history = []
+        stats_history = []
 
         self.model.train()
 
@@ -190,26 +185,17 @@ class DetectingClient(fl.client.NumPyClient):
             loss.backward()
             optimizer.step()
 
-            history.append(self._layer_stats())
+            stats_history.append(self._collect_layer_stats())
 
-        # first round establishes baseline
-        if self.baseline_stats is None:
-            self.baseline_stats = history
-            return False
+        # Compare first vs last warm-up step
+        z = self._z_score_between(
+            stats_history[0],
+            stats_history[-1]
+        )
 
-        # compute deviation
-        z = self._z_score(history[-1], self.baseline_stats)
-        print("Z-Score:", z)
+        print(f"[Client] Warm-up Z-score: {z:.2f}")
 
-        print(f"[Client] Max Z-score this round: {z:.2f}")
-
-        if z > z_thresh:
-            print("[Client] ⚠️ Malicious model detected")
-            return True
-
-        # update baseline with benign history
-        self.baseline_stats.extend(history)
-        return False
+        return z > z_thresh
 
     # --------------------------------------------------
     # Fit
@@ -230,11 +216,11 @@ class DetectingClient(fl.client.NumPyClient):
         )
 
         if suspicious:
-            # abort this round
+            print("[Client] ⚠️ Malicious model detected — aborting round")
             return self.get_parameters(config), 0, {"aborted": True}
 
         # --------------------------------------------------
-        # Normal gradient computation (for your attack demo)
+        # Normal gradient computation (for attack demo)
         # --------------------------------------------------
         self.model.eval()
         self.model.zero_grad()
@@ -249,6 +235,84 @@ class DetectingClient(fl.client.NumPyClient):
             if p.grad is not None else None
             for p in self.model.parameters()
         ]
+
+        return self.get_parameters(config), 1, {
+            "grads": json.dumps(grads),
+            "label": int(self.y.item())
+        }
+
+class ProjectedClient(fl.client.NumPyClient):
+    def __init__(self, x, y, rank_ratio=0.3):
+        """
+        rank_ratio: fraction of gradient entries to keep (0 < rank_ratio ≤ 1)
+        """
+        self.model = LeNet().to(DEVICE)
+        self.x = x.to(DEVICE)
+        self.y = y.to(DEVICE)
+        self.rank_ratio = rank_ratio
+
+    # --------------------------------------------------
+    # Flower required methods
+    # --------------------------------------------------
+    def get_parameters(self, config):
+        return [
+            p.detach().cpu().numpy()
+            for p in self.model.state_dict().values()
+        ]
+
+    def evaluate(self, parameters, config):
+        return 0.0, 1, {}
+
+    # --------------------------------------------------
+    # Gradient projection defense
+    # --------------------------------------------------
+    def _project_gradient(self, grad):
+        """
+        Randomly keep only a subset of gradient entries.
+        """
+        flat = grad.view(-1)
+        d = flat.numel()
+        k = max(1, int(d * self.rank_ratio))
+
+        idx = torch.randperm(d, device=flat.device)[:k]
+
+        projected = torch.zeros_like(flat)
+        projected[idx] = flat[idx]
+
+        return projected.view_as(grad)
+
+    # --------------------------------------------------
+    # Fit
+    # --------------------------------------------------
+    def fit(self, parameters, config):
+        # Load global parameters
+        state_dict = {
+            k: torch.tensor(v)
+            for k, v in zip(
+                self.model.state_dict().keys(),
+                parameters
+            )
+        }
+        self.model.load_state_dict(state_dict, strict=True)
+
+        self.model.train()
+        self.model.zero_grad()
+
+        # Normal forward/backward
+        loss = torch.nn.functional.cross_entropy(
+            self.model(self.x), self.y
+        )
+        loss.backward()
+
+        # 🔐 Apply gradient subspace projection
+        grads = []
+        for p in self.model.parameters():
+            if p.grad is None:
+                grads.append(None)
+                continue
+
+            g_proj = self._project_gradient(p.grad)
+            grads.append(g_proj.detach().cpu().numpy().tolist())
 
         return self.get_parameters(config), 1, {
             "grads": json.dumps(grads),
