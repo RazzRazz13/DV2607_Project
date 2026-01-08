@@ -34,7 +34,7 @@ for data in tqdm(dataloader, desc="Reading batch"):
     xs, ys = data[0], data[1]
     break
 
-batch_size = 4
+batch_size = 5
 x_batch = xs[:batch_size]
 y_batch = ys[:batch_size]
 
@@ -74,7 +74,7 @@ result = gradinversion.group_attack(received_gradients, batch_size=batch_size)
 # -----------------------------
 print("Starting FedAVG Training with Gradient Inversion Attack...")
 print("-" * 60)
-custom_order = [3,2,0,1]
+custom_order = [3,2,0,1,4]
 batch_size = len(x_batch)  # make sure batch_size matches your data
 num_rows = 2
 num_cols = batch_size  # assuming batch_size matches len(x_batch)
