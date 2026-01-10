@@ -280,3 +280,82 @@ class ProjectedClient(fl.client.NumPyClient):
             "grads": json.dumps(grads),
             "label": int(self.y.item())
         }
+
+class NoisyProjectedClient(fl.client.NumPyClient):
+    """ Flower client that adds noise and projects gradients."""
+    def __init__(self, x, y, rank_ratio=0.3):
+        """
+        rank_ratio: fraction of gradient entries to keep (0 < rank_ratio ≤ 1)
+        """
+        self.model = LeNet().to(DEVICE)
+        self.x = x.to(DEVICE)
+        self.y = y.to(DEVICE)
+        self.rank_ratio = rank_ratio
+
+    def get_parameters(self, config):
+        return [
+            p.detach().cpu().numpy()
+            for p in self.model.state_dict().values()
+        ]
+
+    def evaluate(self, parameters, config):
+        return 0.0, 1, {}
+
+    def _project_gradient(self, grad):
+        """
+        Randomly keep only a subset of gradient entries.
+        """
+        flat = grad.view(-1)
+        d = flat.numel()
+        k = max(1, int(d * self.rank_ratio))
+
+        idx = torch.randperm(d, device=flat.device)[:k]
+
+        projected = torch.zeros_like(flat)
+        projected[idx] = flat[idx]
+
+        return projected.view_as(grad)
+
+    def fit(self, parameters, config):
+        state_dict = {
+            k: torch.tensor(v)
+            for k, v in zip(
+                self.model.state_dict().keys(),
+                parameters
+            )
+        }
+        self.model.load_state_dict(state_dict, strict=True)
+
+        self.model.train()
+        self.model.zero_grad()
+
+        x_real = self.x
+        y_real = self.y
+
+        x_noise = torch.randn_like(x_real) * 0.5
+
+        alpha = 0.5
+
+        logits_real = self.model(x_real)
+        logits_noise = self.model(x_noise)
+
+        loss = (
+            torch.nn.functional.cross_entropy(logits_real, y_real)
+            + alpha * torch.nn.functional.cross_entropy(logits_noise, y_real)
+        )
+
+        loss.backward()
+
+        grads = []
+        for p in self.model.parameters():
+            if p.grad is None:
+                grads.append(None)
+                continue
+
+            g_proj = self._project_gradient(p.grad)
+            grads.append(g_proj.detach().cpu().numpy().tolist())
+
+        return self.get_parameters(config), 1, {
+            "grads": json.dumps(grads),
+            "label": int(y_real.item())
+        }

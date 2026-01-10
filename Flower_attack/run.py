@@ -7,6 +7,7 @@ from client import (
     NoisyClient,
     DetectingClient,
     ProjectedClient,
+    NoisyProjectedClient
 )
 # pylint: enable=unused-import
 
@@ -24,7 +25,7 @@ def client_fn(_):
     """ Create a Flower client representing a single user. 
         Change return type for different client behaviors.
     """
-    return HonestClient(x.clone(), y.clone()).to_client()
+    return NoisyProjectedClient(x.clone(), y.clone()).to_client()
 
 strategy = MaliciousFedAvg(
     fraction_fit=1.0,
