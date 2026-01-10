@@ -1,73 +1,66 @@
 import torch
 import torch.nn as nn
+import os
 from matplotlib import pyplot as plt
-from tqdm import tqdm
 from aijack.collaborative.fedavg import FedAVGAPI, FedAVGClient, FedAVGServer
 from aijack.attack.inversion import GradientInversionAttackServerManager
 from torch.utils.data import DataLoader, TensorDataset
-from aijack.attack.inversion import GradientInversion_Attack
-from model_data import LeNet, prepare_dataloader
+from model_data import LeNet
 import torch.optim as optim
 from PIL import Image
-import numpy as np
-import torchvision.transforms as T
+import torchvision.transforms as transforms
 
+#Setting seed
 torch.manual_seed(7777)
 
 shape_img = (28, 28)
 num_classes = 10
 channel = 1
 hidden = 588
-criterion = nn.CrossEntropyLoss()
+
 num_seeds = 5
 
 device = torch.device("cuda:0") if torch.cuda.is_available() else "cpu"
 
 
-dataloader = prepare_dataloader()
-for data in dataloader:
-    xs, ys = data[0], data[1]
-    break
-img = Image.open("rj.jpg")      # <-- replace with your file
-img = img.convert("L")                          # convert to grayscale if needed
+#Loading picture
+BASE_DIR = "base_pic"
+REC_DIR = "rec_pic"
+os.makedirs(REC_DIR, exist_ok=True)
 
+image_path = "rj.jpg"
 
-transform = T.Compose([
-    T.Grayscale(),               # convert to 1 channel
-    T.Resize((28, 28)),          # must match MNIST
-    T.ToTensor(),                # -> tensor [1,28,28]
+transform = transforms.Compose([
+    transforms.Grayscale(num_output_channels=1),
+    transforms.Resize((28, 28)),
+    transforms.ToTensor(),
 ])
-# Convert to tensor with shape [1, 1, H, W]
-x = transform(img)              # x is [1,28,28]
+
+img = Image.open(os.path.join(BASE_DIR, image_path)).convert("RGB")
+x = transform(img)
 x = x.unsqueeze(0)    
 y = torch.tensor([0])
-#x = xs[:1]
-#y = ys[:1]
 
-fig = plt.figure(figsize=(1, 1))
-plt.axis("off")
-plt.imshow(x.detach().numpy()[0][0], cmap="gray")
-plt.savefig("rj_2.png")
+criterion = nn.CrossEntropyLoss()
 
-
+#Inversion attack
 manager = GradientInversionAttackServerManager(
     (1, 28, 28),
     num_trial_per_communication=5,
-    log_interval=50,
+    log_interval=20,
     num_iteration=100,
-    tv_reg_coef=0.01,
-    distancename="cossim",
+    distancename="l2",
     device=device,
     lr=1.0,
 )
-GSFedAVGServer = manager.attach(FedAVGServer)
+DLGFedAVGServer = manager.attach(FedAVGServer)
 
 client = FedAVGClient(
     LeNet(channel=channel, hideen=hidden, num_classes=num_classes).to(device),
     lr=1.0,
     device=device,
 )
-server = GSFedAVGServer(
+server = DLGFedAVGServer(
     [client],
     LeNet(channel=channel, hideen=hidden, num_classes=num_classes).to(device),
     lr=1.0,
@@ -88,14 +81,19 @@ api = FedAVGAPI(
     use_gradients=True,
     device=device,
 )
-
 api.run()
 
+
+#Printing images
+print("Plotting pictures")
 fig = plt.figure(figsize=(5, 2))
+ax = fig.add_subplot(1, len(server.attack_results[0]) + 1, 1)
+ax.imshow(x.detach().numpy()[0][0], cmap="gray")
+ax.axis("off")
 for s, result in enumerate(server.attack_results[0]):
-    ax = fig.add_subplot(1, len(server.attack_results[0]), s + 1)
+    ax = fig.add_subplot(1, len(server.attack_results[0]) + 1, s + 2)
     ax.imshow(result[0].cpu().detach().numpy()[0][0], cmap="gray")
     ax.axis("off")
+plt.savefig(os.path.join(REC_DIR, "single_picture.png"))
 plt.tight_layout()
-plt.savefig("single_picture.png")
-plt.show()
+plt.close()

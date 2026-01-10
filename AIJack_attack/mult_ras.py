@@ -7,9 +7,8 @@ import torchvision.transforms as transforms
 from aijack.attack.inversion import GradientInversion_Attack
 from model_data import LeNet
 
-# -----------------------------
-# MAIN
-# -----------------------------
+
+#Setting seed
 torch.manual_seed(7777)
 
 num_classes = 10
@@ -19,9 +18,8 @@ criterion = nn.CrossEntropyLoss()
 
 device = torch.device("cuda:0") if torch.cuda.is_available() else "cpu"
 
-# -----------------------------
-# PATHS
-# -----------------------------
+
+#Loading pictures
 BASE_DIR = "base_pic"
 REC_DIR = "rec_pic"
 os.makedirs(REC_DIR, exist_ok=True)
@@ -35,9 +33,6 @@ image_paths = [
     "rj.jpg"
 ]
 
-# -----------------------------
-# LOAD LOCAL IMAGES
-# -----------------------------
 transform = transforms.Compose([
     transforms.Grayscale(num_output_channels=1),
     transforms.Resize((28, 28)),
@@ -56,9 +51,7 @@ x_batch = torch.stack(images)  # (B,1,28,28)
 y_batch = torch.tensor([0, 1, 2, 3, 4, 5], dtype=torch.long)
 batch_size = x_batch.size(0)
 
-# -----------------------------
-# GRADIENT INVERSION ATTACK
-# -----------------------------
+#Inversion attack
 net = LeNet(channel=channel, hideen=hidden, num_classes=num_classes)
 
 pred = net(x_batch)
@@ -72,7 +65,7 @@ gradinversion = GradientInversion_Attack(
     (1, 28, 28),
     num_iteration=1000,
     lr=1e2,
-    log_interval=0,
+    log_interval=50,
     optimizer_class=torch.optim.SGD,
     distancename="l2",
     optimize_label=False,
@@ -89,26 +82,23 @@ result = gradinversion.group_attack(
     batch_size=batch_size
 )
 
-avg_result = sum(result[0]) / len(result[0])  # average groups
-
-# -----------------------------
-# COMBINED VISUALIZATION
-# -----------------------------
+#Printing images
 custom_order = [2, 1, 3, 4, 5, 0]
 num_rows = 2
 num_cols = batch_size
 
 fig = plt.figure(figsize=(num_cols * 2, num_rows * 2))
 
-# Reconstructed
+# First row: averaged results
 for i in range(batch_size):
     ax = fig.add_subplot(num_rows, num_cols, i + 1)
-    ax.imshow(avg_result[i][0].cpu(), cmap="gray")
+    avg_img = (sum(result[0]) / len(result[0])).detach().numpy()[i][0]
+    ax.imshow(avg_img, cmap="gray")
     ax.axis("off")
     if i == 0:
         ax.set_ylabel("Result")
 
-# Original (custom order)
+# Second row: original images in custom order
 for plot_idx, batch_idx in enumerate(custom_order):
     ax = fig.add_subplot(num_rows, num_cols, num_cols + plot_idx + 1)
     ax.imshow(x_batch[batch_idx][0].cpu(), cmap="gray")

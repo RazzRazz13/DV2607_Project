@@ -3,16 +3,12 @@ import torch
 import torch.nn as nn
 from matplotlib import pyplot as plt
 from tqdm import tqdm
-from aijack.collaborative.fedavg import FedAVGAPI, FedAVGClient, FedAVGServer
-from aijack.attack.inversion import GradientInversionAttackServerManager
 from torch.utils.data import DataLoader, TensorDataset
 from aijack.attack.inversion import GradientInversion_Attack
 from model_data import LeNet, prepare_dataloader
 
 
-# -----------------------------
-# MAIN
-# -----------------------------
+#Setting seed
 torch.manual_seed(7777)
 
 shape_img = (28, 28)
@@ -24,9 +20,7 @@ num_seeds = 5
 
 device = torch.device("cuda:0") if torch.cuda.is_available() else "cpu"
 
-# -----------------------------
-# LOAD DATA WITH PROGRESS
-# -----------------------------
+#Loading pictures
 dataloader = prepare_dataloader()
 
 print("Loading one batch...")
@@ -39,9 +33,7 @@ x_batch = xs[:batch_size]
 y_batch = ys[:batch_size]
 
 
-# -----------------------------
-# SET UP ATTACK MANAGER
-# -----------------------------
+#Inversion attack
 print("Initializing Gradient Inversion Attack Manager...")
 
 net = LeNet(channel=channel, hideen=hidden, num_classes=num_classes)
@@ -69,15 +61,13 @@ gradinversion = GradientInversion_Attack(
 result = gradinversion.group_attack(received_gradients, batch_size=batch_size)
 
 
-# -----------------------------
-# FEDAVG API WITH PROGRESS PRINTS
-# -----------------------------
+#Printing images
+
 print("Starting FedAVG Training with Gradient Inversion Attack...")
 print("-" * 60)
 custom_order = [3,2,0,1,4]
-batch_size = len(x_batch)  # make sure batch_size matches your data
 num_rows = 2
-num_cols = batch_size  # assuming batch_size matches len(x_batch)
+num_cols = batch_size
 
 fig = plt.figure(figsize=(num_cols*2, num_rows*2))
 
