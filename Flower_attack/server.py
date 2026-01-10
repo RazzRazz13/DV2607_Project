@@ -1,23 +1,24 @@
+""" Flower server with malicious FedAvg strategy performing gradient inversion attack."""
+
 import json
+from collections import OrderedDict
 import torch
 import flwr as fl
 from model import LeNet
 import matplotlib.pyplot as plt
-from collections import OrderedDict
 from config import NUM_ROUNDS, DEVICE
 from attack import gradient_inversion
 
 class MaliciousFedAvg(fl.server.strategy.FedAvg):
-    def aggregate_fit(self, rnd, results, failures):
+    """ Custom FedAvg strategy that performs gradient inversion attack. """
+    def aggregate_fit(self, server_round, results, failures):
         if not results:
             print("[Server] No client results received")
-            return super().aggregate_fit(rnd, results, failures)
+            return super().aggregate_fit(server_round, results, failures)
 
         _, fit_res = results[0]
 
-        # Single-client assumption
-        assert fit_res.num_examples == 1, \
-            "Gradient inversion requires batch_size=1"
+        assert fit_res.num_examples == 1
 
         model = LeNet().to(DEVICE)
         params = fl.common.parameters_to_ndarrays(fit_res.parameters)
@@ -34,8 +35,8 @@ class MaliciousFedAvg(fl.server.strategy.FedAvg):
 
         label = fit_res.metrics["label"]
 
-        if rnd == NUM_ROUNDS:
-            print(f"[Server] Running gradient inversion attack (round {rnd})...")
+        if server_round == NUM_ROUNDS:
+            print(f"[Server] Running gradient inversion attack (round {server_round})...")
             img = gradient_inversion(model, target_grads, label)
 
             plt.imshow(img[0, 0], cmap="gray")
@@ -45,6 +46,4 @@ class MaliciousFedAvg(fl.server.strategy.FedAvg):
 
             print("[Server] Saved reconstructed.png")
 
-        return super().aggregate_fit(rnd, results, failures)
-
-
+        return super().aggregate_fit(server_round, results, failures)

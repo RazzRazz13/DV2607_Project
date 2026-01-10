@@ -1,7 +1,9 @@
-import torch.nn as nn
-from config import IMG_CHANNELS, HIDDEN_DIM, NUM_CLASSES
+""" LeNet model definition for image classification."""
+
+from torch import nn
 
 class LeNet(nn.Module):
+    """ LeNet model definition for image classification."""
     def __init__(self, num_classes=10):
         super().__init__()
         self.conv = nn.Sequential(
@@ -13,6 +15,7 @@ class LeNet(nn.Module):
         self.fc = nn.Linear(64 * 28 * 28, num_classes)
 
     def forward(self, x):
+        """ Forward pass of the model."""
         x = self.conv(x)
         x = x.view(x.size(0), -1)
         return self.fc(x)

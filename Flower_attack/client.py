@@ -1,10 +1,12 @@
-import torch
+""" Flower clients with different behaviors. """
+
 import json
+import torch
 import flwr as fl
 from model import LeNet
 from config import DEVICE
-
 class HonestClient(fl.client.NumPyClient):
+    """ Standard flower client that returns true gradients."""
     def __init__(self, x, y):
         self.model = LeNet().to(DEVICE)
         self.x = x.to(DEVICE)
@@ -14,18 +16,15 @@ class HonestClient(fl.client.NumPyClient):
         return [p.detach().cpu().numpy() for p in self.model.state_dict().values()]
 
     def fit(self, parameters, config):
-        # Load global parameters
         state_dict = {
             k: torch.tensor(v)
             for k, v in zip(self.model.state_dict().keys(), parameters)
         }
         self.model.load_state_dict(state_dict, strict=True)
 
-        # self.model.train()
         self.model.eval()
         self.model.zero_grad()
 
-        # 🔑 Compute gradients ONCE, no optimizer step
         loss = torch.nn.functional.cross_entropy(
             self.model(self.x), self.y
         )
@@ -45,6 +44,7 @@ class HonestClient(fl.client.NumPyClient):
         return 0.0, 1, {}
 
 class NoisyClient(fl.client.NumPyClient):
+    """ Flower client that adds noise to gradients."""
     def __init__(self, x, y):
         self.model = LeNet().to(DEVICE)
         self.x = x.to(DEVICE)
@@ -54,9 +54,6 @@ class NoisyClient(fl.client.NumPyClient):
         return [p.detach().cpu().numpy() for p in self.model.state_dict().values()]
 
     def fit(self, parameters, config):
-        # -------------------------
-        # Load global parameters
-        # -------------------------
         state_dict = {
             k: torch.tensor(v)
             for k, v in zip(self.model.state_dict().keys(), parameters)
@@ -66,16 +63,12 @@ class NoisyClient(fl.client.NumPyClient):
         self.model.train()
         self.model.zero_grad()
 
-        # -------------------------
-        # DEFENSE: input-space mixing
-        # -------------------------
         x_real = self.x
         y_real = self.y
 
-        # second, unrelated input
         x_noise = torch.randn_like(x_real) * 0.5
-        
-        alpha = 0.5  # strength of defense (0.3–0.7 works well)
+
+        alpha = 0.5
 
         logits_real = self.model(x_real)
         logits_noise = self.model(x_noise)
@@ -87,9 +80,6 @@ class NoisyClient(fl.client.NumPyClient):
 
         loss.backward()
 
-        # -------------------------
-        # Send gradients
-        # -------------------------
         grads = [
             p.grad.detach().cpu().numpy().tolist()
             if p.grad is not None else None
@@ -103,25 +93,20 @@ class NoisyClient(fl.client.NumPyClient):
 
     def evaluate(self, parameters, config):
         return 0.0, 1, {}
-    
+
 class DetectingClient(fl.client.NumPyClient):
+    """ Flower client that detects malicious models."""
     def __init__(self, x, y):
         self.model = LeNet().to(DEVICE)
         self.x = x.to(DEVICE)
         self.y = y.to(DEVICE)
 
-    # --------------------------------------------------
-    # Flower required methods
-    # --------------------------------------------------
     def get_parameters(self, config):
         return [p.detach().cpu().numpy() for p in self.model.state_dict().values()]
 
     def evaluate(self, parameters, config):
         return 0.0, 1, {}
 
-    # --------------------------------------------------
-    # Detection utilities
-    # --------------------------------------------------
     def _collect_layer_stats(self):
         """
         Collect statistics from attack-relevant layers.
@@ -165,9 +150,6 @@ class DetectingClient(fl.client.NumPyClient):
 
         return z_max
 
-    # --------------------------------------------------
-    # Stateless warm-up detection
-    # --------------------------------------------------
     def warmup_detect(self, steps=5, lr=1e-3, z_thresh=10.0):
         """
         Returns True if model appears malicious.
@@ -187,7 +169,6 @@ class DetectingClient(fl.client.NumPyClient):
 
             stats_history.append(self._collect_layer_stats())
 
-        # Compare first vs last warm-up step
         z = self._z_score_between(
             stats_history[0],
             stats_history[-1]
@@ -197,18 +178,13 @@ class DetectingClient(fl.client.NumPyClient):
 
         return z > z_thresh
 
-    # --------------------------------------------------
-    # Fit
-    # --------------------------------------------------
     def fit(self, parameters, config):
-        # Load global parameters
         state_dict = {
             k: torch.tensor(v)
             for k, v in zip(self.model.state_dict().keys(), parameters)
         }
         self.model.load_state_dict(state_dict, strict=True)
 
-        # 🔐 Detection phase
         suspicious = self.warmup_detect(
             steps=5,
             lr=1e-3,
@@ -219,9 +195,6 @@ class DetectingClient(fl.client.NumPyClient):
             print("[Client] ⚠️ Malicious model detected — aborting round")
             return self.get_parameters(config), 0, {"aborted": True}
 
-        # --------------------------------------------------
-        # Normal gradient computation (for attack demo)
-        # --------------------------------------------------
         self.model.eval()
         self.model.zero_grad()
 
@@ -242,6 +215,7 @@ class DetectingClient(fl.client.NumPyClient):
         }
 
 class ProjectedClient(fl.client.NumPyClient):
+    """ Flower client that returns only a fraction of gradient entries are returned."""
     def __init__(self, x, y, rank_ratio=0.3):
         """
         rank_ratio: fraction of gradient entries to keep (0 < rank_ratio ≤ 1)
@@ -251,9 +225,6 @@ class ProjectedClient(fl.client.NumPyClient):
         self.y = y.to(DEVICE)
         self.rank_ratio = rank_ratio
 
-    # --------------------------------------------------
-    # Flower required methods
-    # --------------------------------------------------
     def get_parameters(self, config):
         return [
             p.detach().cpu().numpy()
@@ -263,9 +234,6 @@ class ProjectedClient(fl.client.NumPyClient):
     def evaluate(self, parameters, config):
         return 0.0, 1, {}
 
-    # --------------------------------------------------
-    # Gradient projection defense
-    # --------------------------------------------------
     def _project_gradient(self, grad):
         """
         Randomly keep only a subset of gradient entries.
@@ -281,11 +249,7 @@ class ProjectedClient(fl.client.NumPyClient):
 
         return projected.view_as(grad)
 
-    # --------------------------------------------------
-    # Fit
-    # --------------------------------------------------
     def fit(self, parameters, config):
-        # Load global parameters
         state_dict = {
             k: torch.tensor(v)
             for k, v in zip(
@@ -298,13 +262,11 @@ class ProjectedClient(fl.client.NumPyClient):
         self.model.train()
         self.model.zero_grad()
 
-        # Normal forward/backward
         loss = torch.nn.functional.cross_entropy(
             self.model(self.x), self.y
         )
         loss.backward()
 
-        # 🔐 Apply gradient subspace projection
         grads = []
         for p in self.model.parameters():
             if p.grad is None:

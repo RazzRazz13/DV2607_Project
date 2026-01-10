@@ -1,5 +1,7 @@
+""" Data loading utilities for MNIST dataset and single image datasets."""
+
 import torchvision
-import torchvision.transforms as transforms
+from torchvision import transforms
 from torch.utils.data import DataLoader, Dataset
 from PIL import Image
 import torch
@@ -23,6 +25,14 @@ class SingleImageDataset(Dataset):
 
 
 def prepare_dataloader(path="./MNIST", use_selfie=False, selfie_path=None, selfie_label=0):
+    """Prepare DataLoader for MNIST or a single image dataset.
+    
+    Args:
+        path (str): Path to MNIST dataset.
+        use_selfie (bool): Whether to use a single image dataset.
+        selfie_path (str): Path to the single image file.
+        selfie_label (int): Label for the single image.
+    """
     transform = transforms.Compose([
         transforms.Resize(IMG_SHAPE),
         transforms.ToTensor(),
@@ -30,10 +40,10 @@ def prepare_dataloader(path="./MNIST", use_selfie=False, selfie_path=None, selfi
     ])
 
     if use_selfie:
-        assert selfie_path is not None, "Must provide a selfie_path if use_selfie=True"
+        assert selfie_path is not None
         dataset = SingleImageDataset(selfie_path, transform=transform, label=selfie_label)
     else:
-        assert BATCH_SIZE == 1, "Gradient inversion requires batch_size=1"
+        assert BATCH_SIZE == 1
         assert SHUFFLE is False
         dataset = torchvision.datasets.MNIST(
             root=path,

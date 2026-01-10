@@ -1,18 +1,30 @@
+""" Main script to run Flower simulation with different client behaviors. """
+
 import flwr as fl
-from client import *
+# pylint: disable=unused-import
+from client import (
+    HonestClient,
+    NoisyClient,
+    DetectingClient,
+    ProjectedClient,
+)
+# pylint: enable=unused-import
+
 from server import MaliciousFedAvg
 from data import prepare_dataloader
 from config import NUM_ROUNDS, NUM_CLIENTS
 
-# Load exactly one sample
+
 dataloader = prepare_dataloader(use_selfie=True, selfie_path="./base_pic/rd.jpg")
 x, y = next(iter(dataloader))
 
-assert x.shape[0] == 1, "Gradient inversion requires batch_size=1"
+assert x.shape[0] == 1
 
 def client_fn(_):
-    # Clone to avoid autograd / state leakage across rounds
-    return ProjectedClient(x.clone(), y.clone()).to_client()
+    """ Create a Flower client representing a single user. 
+        Change return type for different client behaviors.
+    """
+    return HonestClient(x.clone(), y.clone()).to_client()
 
 strategy = MaliciousFedAvg(
     fraction_fit=1.0,
