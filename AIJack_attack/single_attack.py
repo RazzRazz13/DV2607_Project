@@ -9,6 +9,7 @@ from model_data import LeNet
 import torch.optim as optim
 from PIL import Image
 import torchvision.transforms as transforms
+import torch.nn.functional as F
 
 #Setting seed
 torch.manual_seed(7777)
@@ -24,8 +25,9 @@ device = torch.device("cuda:0") if torch.cuda.is_available() else "cpu"
 
 
 #Loading picture
-BASE_DIR = "base_pic"
-REC_DIR = "rec_pic"
+BASE_DIR = "../base_pic"
+REC_DIR = "../rec_pic"
+SCORE_DIR = "../scores"
 os.makedirs(REC_DIR, exist_ok=True)
 
 image_path = "rj.jpg"
@@ -88,12 +90,36 @@ api.run()
 print("Plotting pictures")
 fig = plt.figure(figsize=(5, 2))
 ax = fig.add_subplot(1, len(server.attack_results[0]) + 1, 1)
-ax.imshow(x.detach().numpy()[0][0], cmap="gray")
+ax.imshow(x[0][0].detach().cpu(), cmap="gray")
 ax.axis("off")
 for s, result in enumerate(server.attack_results[0]):
     ax = fig.add_subplot(1, len(server.attack_results[0]) + 1, s + 2)
-    ax.imshow(result[0].cpu().detach().numpy()[0][0], cmap="gray")
+    ax.imshow(result[0][0][0].detach().cpu(), cmap="gray")
     ax.axis("off")
 plt.savefig(os.path.join(REC_DIR, "single_picture.png"))
 plt.tight_layout()
 plt.close()
+
+
+scores = []
+
+def normalize(img):
+    img_min = img.min()
+    img_max = img.max()
+    return (img - img_min) / (img_max - img_min + 1e-8)
+
+for result in server.attack_results[0]:
+    pred = result[0][0][0].detach().cpu()
+    target = x[0][0].detach().cpu()
+    pred = normalize(pred)
+    scores.append(F.mse_loss(pred, target).item())
+
+avg = round(sum(scores) / len(scores), 2)
+
+file_path = os.path.join(SCORE_DIR, "mse_scores.txt")
+
+with open(file_path, "w") as f:
+    f.write("MSE scores per image:\n")
+    for i, s in enumerate(scores):
+        f.write(f"Image {i}: {s:.6f}\n")
+    f.write(f"\nAverage MSE: {avg:.6f}\n")  # more precision

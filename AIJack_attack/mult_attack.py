@@ -1,5 +1,6 @@
 
 import torch
+import os
 import torch.nn as nn
 from matplotlib import pyplot as plt
 from tqdm import tqdm
@@ -7,9 +8,13 @@ from torch.utils.data import DataLoader, TensorDataset
 from aijack.attack.inversion import GradientInversion_Attack
 from model_data import LeNet, prepare_dataloader
 
+import torch.nn.functional as F
+
 
 #Setting seed
 torch.manual_seed(7777)
+
+SCORE_DIR = "../scores"
 
 shape_img = (28, 28)
 num_classes = 10
@@ -28,7 +33,7 @@ for data in tqdm(dataloader, desc="Reading batch"):
     xs, ys = data[0], data[1]
     break
 
-batch_size = 5
+batch_size = 2
 x_batch = xs[:batch_size]
 y_batch = ys[:batch_size]
 
@@ -65,7 +70,7 @@ result = gradinversion.group_attack(received_gradients, batch_size=batch_size)
 
 print("Starting FedAVG Training with Gradient Inversion Attack...")
 print("-" * 60)
-custom_order = [3,2,0,1,4]
+custom_order = [0,1]
 num_rows = 2
 num_cols = batch_size
 
@@ -74,7 +79,7 @@ fig = plt.figure(figsize=(num_cols*2, num_rows*2))
 # First row: averaged results
 for bid in range(batch_size):
     ax = fig.add_subplot(num_rows, num_cols, bid + 1)
-    avg_img = (sum(result[0]) / len(result[0])).detach().numpy()[bid][0]
+    avg_img = (sum(result[0]) / len(result[0])).detach().cpu()[bid][0]
     ax.imshow(avg_img, cmap="gray")
     ax.axis("off")
     if bid == 0:
@@ -90,3 +95,19 @@ for plot_idx, batch_idx in enumerate(custom_order):
 
 plt.tight_layout()
 plt.savefig("combined_figure.png")
+
+
+scores = []
+for i in range(batch_size):
+    scores.append(F.mse_loss((sum(result[0]) / len(result[0])).detach().cpu()[i][0], x_batch[custom_order[i]][0].cpu()).item())
+
+avg = round(sum(scores) / len(scores), 2)
+
+
+file_path = os.path.join(SCORE_DIR, "mse_scores.txt")
+
+with open(file_path, "w") as f:
+    f.write("MSE scores per image:\n")
+    for i, s in enumerate(scores):
+        f.write(f"Image {i}: {s:.6f}\n")
+    f.write(f"\nAverage MSE: {avg:.2f}\n")

@@ -7,6 +7,8 @@ import torchvision.transforms as transforms
 from aijack.attack.inversion import GradientInversion_Attack
 from model_data import LeNet
 
+import torch.nn.functional as F
+
 
 #Setting seed
 torch.manual_seed(7777)
@@ -20,17 +22,14 @@ device = torch.device("cuda:0") if torch.cuda.is_available() else "cpu"
 
 
 #Loading pictures
-BASE_DIR = "base_pic"
-REC_DIR = "rec_pic"
+BASE_DIR = "../base_pic"
+REC_DIR = "../rec_pic"
+SCORE_DIR = "../scores"
 os.makedirs(REC_DIR, exist_ok=True)
 
 image_paths = [
     "rd.jpg",
     "rj.jpg",
-    "rl.jpg",
-    "rn.jpg",
-    "re.png",
-    "rj.jpg"
 ]
 
 transform = transforms.Compose([
@@ -48,7 +47,7 @@ for name in image_paths:
 x_batch = torch.stack(images)  # (B,1,28,28)
 
 # Dummy labels
-y_batch = torch.tensor([0, 1, 2, 3, 4, 5], dtype=torch.long)
+y_batch = torch.tensor([0, 1], dtype=torch.long)
 batch_size = x_batch.size(0)
 
 #Inversion attack
@@ -83,7 +82,7 @@ result = gradinversion.group_attack(
 )
 
 #Printing images
-custom_order = [2, 1, 3, 4, 5, 0]
+custom_order = [1, 0]
 num_rows = 2
 num_cols = batch_size
 
@@ -92,7 +91,7 @@ fig = plt.figure(figsize=(num_cols * 2, num_rows * 2))
 # First row: averaged results
 for i in range(batch_size):
     ax = fig.add_subplot(num_rows, num_cols, i + 1)
-    avg_img = (sum(result[0]) / len(result[0])).detach().numpy()[i][0]
+    avg_img = (sum(result[0]) / len(result[0])).detach().cpu()[i][0]
     ax.imshow(avg_img, cmap="gray")
     ax.axis("off")
     if i == 0:
@@ -109,3 +108,19 @@ for plot_idx, batch_idx in enumerate(custom_order):
 plt.tight_layout()
 plt.savefig(os.path.join(REC_DIR, "combined_figure.png"))
 plt.close()
+
+scores = []
+for i in range(batch_size):
+    scores.append(F.mse_loss((sum(result[0]) / len(result[0])).detach().cpu()[i][0], x_batch[custom_order[i]][0].cpu()).item())
+
+avg = round(sum(scores) / len(scores), 2)
+
+
+file_path = os.path.join(SCORE_DIR, "mse_scores.txt")
+
+with open(file_path, "w") as f:
+    f.write("MSE scores per image:\n")
+    for i, s in enumerate(scores):
+        f.write(f"Image {i}: {s:.6f}\n")
+    f.write(f"\nAverage MSE: {avg:.2f}\n")
+

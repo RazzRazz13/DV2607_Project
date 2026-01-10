@@ -1,0 +1,7 @@
+MSE scores per image:
+Image 0: 1.212330
+Image 1: 1.311127
+Image 2: 1.205382
+Image 3: 1.117399
+
+Average MSE: 1.21
